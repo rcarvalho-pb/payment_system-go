@@ -3,7 +3,7 @@ package event
 type Type string
 
 const (
-	PaymentRequest   Type = "REQUEST"
+	PaymentRequested Type = "REQUESTED"
 	PaymentSucceeded Type = "SUCCEEDED"
 	PaymentFailed    Type = "FAILED"
 )
