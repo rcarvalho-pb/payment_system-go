@@ -50,7 +50,7 @@ func (s *Service) RequestPayment(invoiceID string) error {
 	}
 
 	evt := event.Event{
-		Type: event.PaymentRequest,
+		Type: event.PaymentRequested,
 		Payload: event.PaymentRequestPayload{
 			InvoiceID: inv.ID,
 			Amount:    inv.Amount,
