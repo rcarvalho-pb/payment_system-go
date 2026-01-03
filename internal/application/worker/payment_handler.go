@@ -5,12 +5,17 @@ import (
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/event"
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/payment"
-	"honnef.co/go/tools/analysis/facts/generated"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infra/logging"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infra/metrics"
 )
 
 type PaymentProcessor struct {
 	Repo     payment.Repository
 	EventBus EventPublisher
+	Retry    *RetryScheduler
+	Logger   logging.Logger
+	Metrics  *metrics.Counters
+	Executor PaymentExecutor
 }
 
 type EventPublisher interface {
@@ -26,6 +31,11 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 	if !ok {
 		return errors.New("invalid payload for PaymentRequested")
 	}
+
+	p.Logger.Info("processing payment", map[string]any{
+		"invoice-id": payload.InvoiceID,
+		"attempt":    payload.Attempt,
+	})
 
 	idempotencyKey := generateIdempotencyKey(payload.InvoiceID)
 
@@ -48,9 +58,17 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		return err
 	}
 
-	success := simulatePayment()
+	success := p.Executor.Execute()
+
+	p.Metrics.IncProcessed()
 
 	if success {
+		p.Metrics.IncSucceeded()
+		p.Logger.Info("payment succeeded", map[string]any{
+			"payment-id": pay.ID,
+			"invoice-id": payload.InvoiceID,
+			"attempt":    payload.Attempt,
+		})
 		p.Repo.UpdateStatus(pay.ID, payment.StatusSuccess)
 
 		return p.EventBus.Publish(event.Event{
@@ -62,15 +80,30 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		})
 	}
 
+	p.Metrics.IncFailed()
+
+	p.Logger.Error("payment failed", map[string]any{
+		"payment_id": pay.ID,
+		"invoice_id": payload.InvoiceID,
+		"attempt":    payload.Attempt,
+		"retryable":  true,
+	})
+
 	p.Repo.UpdateStatus(pay.ID, payment.StatusFailed)
 
-	return p.EventBus.Publish(event.Event{
-		Type: event.PaymentFailed,
-		Payload: event.PaymentFailedPayload{
-			InvoiceID: payload.InvoiceID,
-			PaymentID: pay.ID,
-			Retryable: true,
-			Reason:    "temporary failure",
-		},
+	failPayload := event.PaymentFailedPayload{
+		InvoiceID: payload.InvoiceID,
+		PaymentID: pay.ID,
+		Retryable: true,
+		Reason:    "temporary failure",
+	}
+
+	p.EventBus.Publish(event.Event{
+		Type:    event.PaymentFailed,
+		Payload: failPayload,
 	})
+
+	p.Retry.ScheduleRetry(payload)
+
+	return nil
 }

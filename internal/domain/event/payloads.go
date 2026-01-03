@@ -3,6 +3,7 @@ package event
 type PaymentRequestPayload struct {
 	InvoiceID string
 	Amount    int64
+	Attempt   int
 }
 
 type PaymentSucceededPayload struct {

@@ -9,3 +9,7 @@ type PaymentWorker struct {
 type PaymentHandler interface {
 	Handle(event.Event) error
 }
+
+type PaymentExecutor interface {
+	Execute() bool
+}

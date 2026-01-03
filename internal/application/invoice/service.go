@@ -54,6 +54,7 @@ func (s *Service) RequestPayment(invoiceID string) error {
 		Payload: event.PaymentRequestPayload{
 			InvoiceID: inv.ID,
 			Amount:    inv.Amount,
+			Attempt:   1,
 		},
 	}
 

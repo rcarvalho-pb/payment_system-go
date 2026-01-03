@@ -16,7 +16,7 @@ type InvoiceRepository struct {
 
 func NewInvoiceRepository() *InvoiceRepository {
 	return &InvoiceRepository{
-		mu:       sync.Mutex{},
+		mu:       sync.RWMutex{},
 		invoices: make(map[string]*invoice.Invoice),
 	}
 }
@@ -41,7 +41,7 @@ func (r *InvoiceRepository) FindByID(id string) (*invoice.Invoice, error) {
 	return inv, nil
 }
 
-func (r *InvoiceRepository) UpdateState(id string, status invoice.Status) error {
+func (r *InvoiceRepository) UpdateStatus(id string, status invoice.Status) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
