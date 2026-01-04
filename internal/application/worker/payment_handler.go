@@ -39,11 +39,6 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 
 	idempotencyKey := generateIdempotencyKey(payload.InvoiceID)
 
-	existing, err := p.Repo.FindByIdempotencyKey(idempotencyKey)
-	if err == nil && existing != nil {
-		return nil
-	}
-
 	paymentID := generatePaymentID()
 
 	pay := &payment.Payment{
@@ -54,8 +49,13 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		IdempotencyKey: idempotencyKey,
 	}
 
-	if err := p.Repo.Save(pay); err != nil {
+	saved, err := p.Repo.SaveIfNotExist(pay)
+	if err != nil {
 		return err
+	}
+
+	if !saved {
+		return nil
 	}
 
 	success := p.Executor.Execute()

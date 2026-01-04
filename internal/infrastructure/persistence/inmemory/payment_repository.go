@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"errors"
+	"maps"
 	"sync"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/payment"
@@ -32,6 +33,20 @@ func (r *PaymentRepository) Save(p *payment.Payment) error {
 	return nil
 }
 
+func (r *PaymentRepository) SaveIfNotExist(p *payment.Payment) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.idempotencyKeys[p.IdempotencyKey]; exists {
+		return false, nil
+	}
+
+	r.payments[p.ID] = p
+	r.idempotencyKeys[p.IdempotencyKey] = p.ID
+
+	return true, nil
+}
+
 func (r *PaymentRepository) FindByIdempotencyKey(key string) (*payment.Payment, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -59,4 +74,11 @@ func (r *PaymentRepository) UpdateStatus(id string, paymentStatus payment.Status
 
 	p.Status = paymentStatus
 	return nil
+}
+
+func (r *PaymentRepository) Payments() map[string]*payment.Payment {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return maps.Clone(r.payments)
 }

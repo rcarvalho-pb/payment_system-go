@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/application/worker"
@@ -38,6 +39,10 @@ type noopLogger struct{}
 
 func (n *noopLogger) Info(string, map[string]any)  {}
 func (n *noopLogger) Error(string, map[string]any) {}
+
+func repoPayments(repo *inmemory.PaymentRepository) map[string]*payment.Payment {
+	return repo.Payments()
+}
 
 func TestPaymentProcessor_WhenPaymentSucceeds_ShouldSavePaymentAndPublishEvent(t *testing.T) {
 	// arrange
@@ -238,5 +243,189 @@ func TestPaymentProcessor_ShouldBiIdempotent_ForSameInvoice(t *testing.T) {
 
 	if executorCalls != 1 {
 		t.Errorf("expected executor to be called once, got %d", executorCalls)
+	}
+}
+
+func TestPaymentProcessor_ShouldNotCreateDuplicatePayments_WhenEventsAreConcurrent(t *testing.T) {
+	repo := inmemory.NewPaymentRepository()
+	executorCalls := 0
+	executor := &fakeExecutor{
+		executeFn: func() bool {
+			executorCalls++
+			return true
+		},
+	}
+	publishedEvents := []event.Event{}
+	eventBus := &fakeEventBus{
+		publishFn: func(evt event.Event) error {
+			publishedEvents = append(publishedEvents, evt)
+			return nil
+		},
+	}
+	retry := &fakeRetry{
+		scheduleFn: func(payload event.PaymentRequestPayload) {
+		},
+	}
+
+	metrics := &metrics.Counters{}
+	logger := &noopLogger{}
+
+	processor := &worker.PaymentProcessor{
+		Repo:     repo,
+		EventBus: eventBus,
+		Retry:    retry,
+		Logger:   logger,
+		Metrics:  metrics,
+		Executor: executor,
+	}
+
+	evt := event.Event{
+		Type: event.PaymentRequested,
+		Payload: event.PaymentRequestPayload{
+			InvoiceID: "inv-race",
+			Amount:    1000,
+			Attempt:   1,
+		},
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_ = processor.Handle(evt)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_ = processor.Handle(evt)
+	}()
+
+	wg.Wait()
+
+	payments := repoPayments(repo)
+
+	if len(payments) != 1 {
+		t.Fatalf("expected exactly 1 payment, but got %d (race condition detected)", len(payments))
+	}
+}
+
+func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnSuccess(t *testing.T) {
+	repo := inmemory.NewPaymentRepository()
+
+	executor := &fakeExecutor{
+		executeFn: func() bool {
+			return true
+		},
+	}
+
+	eventBus := &fakeEventBus{
+		publishFn: func(event.Event) error {
+			return nil
+		},
+	}
+
+	retry := &fakeRetry{
+		scheduleFn: func(event.PaymentRequestPayload) {
+		},
+	}
+
+	metrics := &metrics.Counters{}
+
+	logger := &noopLogger{}
+
+	processor := &worker.PaymentProcessor{
+		Repo:     repo,
+		EventBus: eventBus,
+		Retry:    retry,
+		Logger:   logger,
+		Metrics:  metrics,
+		Executor: executor,
+	}
+
+	evt := event.Event{
+		Type: event.PaymentRequested,
+		Payload: event.PaymentRequestPayload{
+			InvoiceID: "inv-metrics-ok",
+			Amount:    1000,
+			Attempt:   1,
+		},
+	}
+
+	err := processor.Handle(evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.PaymentsProcessed != 1 {
+		t.Errorf("expected PaymentProcessed = 1, got %d", metrics.PaymentsProcessed)
+	}
+
+	if metrics.PaymentsSucceeded != 1 {
+		t.Errorf("expected PaymentSucceeded = 1, got %d", metrics.PaymentsSucceeded)
+	}
+
+	if metrics.PaymentsFailed != 0 {
+		t.Errorf("expected PaymentFailed = 0, got %d", metrics.PaymentsFailed)
+	}
+}
+
+func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnFailure(t *testing.T) {
+	repo := inmemory.NewPaymentRepository()
+
+	executor := &fakeExecutor{
+		executeFn: func() bool {
+			return false
+		},
+	}
+
+	eventBus := &fakeEventBus{
+		publishFn: func(event.Event) error {
+			return nil
+		},
+	}
+
+	retry := &fakeRetry{
+		scheduleFn: func(event.PaymentRequestPayload) {
+		},
+	}
+
+	metrics := &metrics.Counters{}
+
+	logger := &noopLogger{}
+
+	processor := &worker.PaymentProcessor{
+		Repo:     repo,
+		EventBus: eventBus,
+		Retry:    retry,
+		Logger:   logger,
+		Metrics:  metrics,
+		Executor: executor,
+	}
+
+	evt := event.Event{
+		Type: event.PaymentRequested,
+		Payload: event.PaymentRequestPayload{
+			InvoiceID: "inv-metrics-ok",
+			Amount:    1000,
+			Attempt:   1,
+		},
+	}
+
+	err := processor.Handle(evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.PaymentsProcessed != 1 {
+		t.Errorf("expected PaymentProcessed = 1, got %d", metrics.PaymentsProcessed)
+	}
+
+	if metrics.PaymentsSucceeded != 0 {
+		t.Errorf("expected PaymentSucceeded = 0, got %d", metrics.PaymentsSucceeded)
+	}
+
+	if metrics.PaymentsFailed != 1 {
+		t.Errorf("expected PaymentFailed = 1, got %d", metrics.PaymentsFailed)
 	}
 }
