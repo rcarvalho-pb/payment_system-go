@@ -13,7 +13,7 @@ type RetryScheduler struct {
 	MaxDelay  time.Duration
 }
 
-func (r *RetryScheduler) ScheduleRetry(payload event.PaymentRequestPayload) {
+func (r *RetryScheduler) Schedule(payload event.PaymentRequestPayload) {
 	if payload.Attempt >= r.MaxRetry {
 		return
 	}

@@ -12,7 +12,7 @@ import (
 type PaymentProcessor struct {
 	Repo     payment.Repository
 	EventBus EventPublisher
-	Retry    *RetryScheduler
+	Retry    Scheduler
 	Logger   logging.Logger
 	Metrics  *metrics.Counters
 	Executor PaymentExecutor
@@ -103,7 +103,7 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		Payload: failPayload,
 	})
 
-	p.Retry.ScheduleRetry(payload)
+	p.Retry.Schedule(payload)
 
 	return nil
 }

@@ -13,3 +13,7 @@ type PaymentHandler interface {
 type PaymentExecutor interface {
 	Execute() bool
 }
+
+type Scheduler interface {
+	Schedule(event.PaymentRequestPayload)
+}
