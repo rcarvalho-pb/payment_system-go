@@ -11,14 +11,24 @@ import (
 	"github.com/rcarvalho-pb/payment_system-go/internal/infra/metrics"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/eventbus"
 	httpapi "github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/http"
-	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/persistence/inmemory"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/outbox"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/persistence/sqlite"
 )
 
 func main() {
-	bus := eventbus.NewInMemoryBus()
+	db, err := sqlite.Open("db/db.db")
+	if err != nil {
+		log.Fatal("error openning database")
+	}
 
-	invoiceRepo := inmemory.NewInvoiceRepository()
-	paymentRepo := inmemory.NewPaymentRepository()
+	invoiceRepo := sqlite.NewInvoiceRepository(db)
+	paymentRepo := sqlite.NewPaymentRepository(db)
+	outboxRepo := sqlite.NewOutboxRepository(db)
+
+	bus := eventbus.NewInMemoryBus()
+	outboxRecorder := &outbox.Recorder{
+		Repo: outboxRepo,
+	}
 
 	invoiceService := &invoice.Service{
 		Repo:     invoiceRepo,
@@ -36,9 +46,16 @@ func main() {
 	metrics := &metrics.Counters{}
 	executor := &worker.RandomPaymentExecutor{}
 
+	dispatcher := outbox.Dispatcher{
+		Repo:         outboxRepo,
+		EventBus:     bus,
+		PollInterval: 0,
+		BatchSize:    0,
+	}
+
 	paymentProcessor := &worker.PaymentProcessor{
 		Repo:     paymentRepo,
-		EventBus: bus,
+		Recorder: outboxRecorder,
 		Retry:    retryScheduler,
 		Logger:   logger,
 		Metrics:  metrics,

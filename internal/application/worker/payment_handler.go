@@ -3,6 +3,7 @@ package worker
 import (
 	"errors"
 
+	"github.com/rcarvalho-pb/payment_system-go/internal/application/contracts"
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/event"
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/payment"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infra/logging"
@@ -11,7 +12,7 @@ import (
 
 type PaymentProcessor struct {
 	Repo     payment.Repository
-	EventBus EventPublisher
+	Recorder contracts.EventRecorder
 	Retry    Scheduler
 	Logger   logging.Logger
 	Metrics  *metrics.Counters
@@ -71,7 +72,7 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		})
 		p.Repo.UpdateStatus(pay.ID, payment.StatusSuccess)
 
-		return p.EventBus.Publish(event.Event{
+		return p.Recorder.Record(event.Event{
 			Type: event.PaymentSucceeded,
 			Payload: event.PaymentSucceededPayload{
 				InvoiceID: payload.InvoiceID,
@@ -98,7 +99,7 @@ func (p *PaymentProcessor) Handle(evt event.Event) error {
 		Reason:    "temporary failure",
 	}
 
-	p.EventBus.Publish(event.Event{
+	p.Recorder.Record(event.Event{
 		Type:    event.PaymentFailed,
 		Payload: failPayload,
 	})

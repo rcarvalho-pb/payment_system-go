@@ -19,12 +19,12 @@ func (f *fakeRetry) Schedule(payload event.PaymentRequestPayload) {
 	f.scheduleFn(payload)
 }
 
-type fakeEventBus struct {
-	publishFn func(event.Event) error
+type fakeRecorder struct {
+	recordFn func(event.Event) error
 }
 
-func (f *fakeEventBus) Publish(evt event.Event) error {
-	return f.publishFn(evt)
+func (f *fakeRecorder) Record(evt event.Event) error {
+	return f.recordFn(evt)
 }
 
 type fakeExecutor struct {
@@ -49,8 +49,8 @@ func TestPaymentProcessor_WhenPaymentSucceeds_ShouldSavePaymentAndPublishEvent(t
 	repo := inmemory.NewPaymentRepository()
 
 	publishedEvents := []event.Event{}
-	eventBus := &fakeEventBus{
-		publishFn: func(evt event.Event) error {
+	recorder := &fakeRecorder{
+		recordFn: func(evt event.Event) error {
 			publishedEvents = append(publishedEvents, evt)
 			return nil
 		},
@@ -67,7 +67,7 @@ func TestPaymentProcessor_WhenPaymentSucceeds_ShouldSavePaymentAndPublishEvent(t
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: recorder,
 		Retry:    nil, // não é usado no caminho de sucesso
 		Logger:   logger,
 		Metrics:  metrics,
@@ -127,8 +127,8 @@ func TestPaymentProcessor_WhenPaymentSucceeds_ShouldSavePaymentAndPublishEvent(t
 func TestPaymentProcessor_WhenPaymentFails_ShouldPublishFailureAndScheduleRetry(t *testing.T) {
 	repo := inmemory.NewPaymentRepository()
 	publishedEvents := []event.Event{}
-	eventBus := &fakeEventBus{
-		publishFn: func(evt event.Event) error {
+	recorder := &fakeRecorder{
+		recordFn: func(evt event.Event) error {
 			publishedEvents = append(publishedEvents, evt)
 			return nil
 		},
@@ -152,7 +152,7 @@ func TestPaymentProcessor_WhenPaymentFails_ShouldPublishFailureAndScheduleRetry(
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: recorder,
 		Retry:    retry,
 		Logger:   logger,
 		Metrics:  metrics,
@@ -209,8 +209,8 @@ func TestPaymentProcessor_ShouldBiIdempotent_ForSameInvoice(t *testing.T) {
 		},
 	}
 
-	eventBus := &fakeEventBus{
-		publishFn: func(evt event.Event) error {
+	recorder := &fakeRecorder{
+		recordFn: func(evt event.Event) error {
 			return nil
 		},
 	}
@@ -222,7 +222,7 @@ func TestPaymentProcessor_ShouldBiIdempotent_ForSameInvoice(t *testing.T) {
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: recorder,
 		Retry:    retry,
 		Logger:   logger,
 		Metrics:  metrics,
@@ -256,8 +256,8 @@ func TestPaymentProcessor_ShouldNotCreateDuplicatePayments_WhenEventsAreConcurre
 		},
 	}
 	publishedEvents := []event.Event{}
-	eventBus := &fakeEventBus{
-		publishFn: func(evt event.Event) error {
+	recorder := &fakeRecorder{
+		recordFn: func(evt event.Event) error {
 			publishedEvents = append(publishedEvents, evt)
 			return nil
 		},
@@ -272,7 +272,7 @@ func TestPaymentProcessor_ShouldNotCreateDuplicatePayments_WhenEventsAreConcurre
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: recorder,
 		Retry:    retry,
 		Logger:   logger,
 		Metrics:  metrics,
@@ -319,8 +319,8 @@ func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnSuccess(t *testing.T) {
 		},
 	}
 
-	eventBus := &fakeEventBus{
-		publishFn: func(event.Event) error {
+	recorder := &fakeRecorder{
+		recordFn: func(event.Event) error {
 			return nil
 		},
 	}
@@ -336,7 +336,7 @@ func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnSuccess(t *testing.T) {
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: recorder,
 		Retry:    retry,
 		Logger:   logger,
 		Metrics:  metrics,
@@ -379,8 +379,8 @@ func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnFailure(t *testing.T) {
 		},
 	}
 
-	eventBus := &fakeEventBus{
-		publishFn: func(event.Event) error {
+	eventBus := &fakeRecorder{
+		recordFn: func(event.Event) error {
 			return nil
 		},
 	}
@@ -396,7 +396,7 @@ func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnFailure(t *testing.T) {
 
 	processor := &worker.PaymentProcessor{
 		Repo:     repo,
-		EventBus: eventBus,
+		Recorder: eventBus,
 		Retry:    retry,
 		Logger:   logger,
 		Metrics:  metrics,
