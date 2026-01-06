@@ -1,15 +1,46 @@
 package worker_test
 
 import (
+	"context"
+	"database/sql"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/application/worker"
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/event"
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/payment"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infra/metrics"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/eventbus"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/outbox"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/persistence/inmemory"
 )
+
+func setupTestDB(t *testing.T) *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	schema := `
+	CREATE TABLE outbox_events (
+		id TEXT PRIMARY KEY,
+		event_type TEXT NOT NULL,
+		payload BLOB NOT NULL,
+		published INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL
+	);
+	`
+
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+
+	return db
+}
 
 type fakeRetry struct {
 	scheduleFn func(event.PaymentRequestPayload)
@@ -428,4 +459,81 @@ func TestPaymentProcessor_ShouldEmitCorrectMetrics_OnFailure(t *testing.T) {
 	if metrics.PaymentsFailed != 1 {
 		t.Errorf("expected PaymentFailed = 1, got %d", metrics.PaymentsFailed)
 	}
+}
+
+func TestPaymentFailureTriggersRetryAndEventuallySucceeded(t *testing.T) {
+	bus := eventbus.NewInMemoryBus()
+	repo := inmemory.NewPaymentRepository()
+
+	calls := 0
+	executor := &fakeExecutor{
+		executeFn: func() bool {
+			calls++
+			return calls >= 2
+		},
+	}
+
+	metrics := &metrics.Counters{}
+	logger := &noopLogger{}
+
+	retry := &worker.RetryScheduler{
+		EventBus:  bus,
+		MaxRetry:  3,
+		BaseDelay: 1 * time.Millisecond,
+		MaxDelay:  5 * time.Millisecond,
+	}
+
+	db := setupTestDB(t)
+
+	outboxDB := outbox.NewSQLiteRepository(db)
+
+	dispatcher := outbox.Dispatcher{
+		Repo:         outboxDB,
+		EventBus:     bus,
+		PollInterval: 1 * time.Millisecond,
+		BatchSize:    1,
+	}
+
+	ctx := context.Background()
+
+	go func() {
+		dispatcher.Run(ctx)
+	}()
+
+	recorder := outbox.Recorder{outboxDB}
+
+	processor := &worker.PaymentProcessor{
+		Repo:     repo,
+		Recorder: &recorder,
+		Retry:    retry,
+		Logger:   logger,
+		Metrics:  metrics,
+		Executor: executor,
+	}
+
+	bus.Subscribe(event.PaymentRequested, processor.Handle)
+
+	payload := event.PaymentRequestPayload{
+		InvoiceID: "inv-123",
+		Amount:    100,
+		Attempt:   1,
+	}
+
+	err := bus.Publish(event.Event{
+		Type:    event.PaymentRequested,
+		Payload: payload,
+	})
+
+	require.NoError(t, err)
+
+	time.Sleep(20 * time.Millisecond)
+
+	require.Equal(t, uint64(2), metrics.PaymentsProcessed)
+	require.Equal(t, uint64(1), metrics.PaymentsFailed)
+	require.Equal(t, uint64(1), metrics.PaymentsSucceeded)
+
+	p, err := repo.FindByIdempotencyKey("payment:inv-123")
+	require.NoError(t, err)
+	require.Equal(t, p.Status, payment.StatusSuccess)
+	ctx.Done()
 }

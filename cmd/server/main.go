@@ -3,21 +3,26 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
+	"os"
+
+	// "net/http"
 	"time"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/application/invoice"
 	"github.com/rcarvalho-pb/payment_system-go/internal/application/worker"
+	"github.com/rcarvalho-pb/payment_system-go/internal/domain/event"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infra/logging"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infra/metrics"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/eventbus"
-	httpapi "github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/http"
+
+	// httpapi "github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/http"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/outbox"
 	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/persistence/sqlite"
 )
 
 func main() {
-	db, err := sqlite.Open("db/db.db")
+	log.Println(os.Getwd())
+	db, err := sqlite.Open("./db/db.db")
 	if err != nil {
 		log.Fatal("error openning database")
 	}
@@ -31,10 +36,10 @@ func main() {
 		Repo: outboxRepo,
 	}
 
-	invoiceService := &invoice.Service{
-		Repo:     invoiceRepo,
-		EventBus: bus,
-	}
+	// invoiceService := &invoice.Service{
+	// 	Repo:     invoiceRepo,
+	// 	EventBus: bus,
+	// }
 
 	retryScheduler := &worker.RetryScheduler{
 		EventBus:  bus,
@@ -54,8 +59,10 @@ func main() {
 		BatchSize:    1024,
 	}
 
+	ctx := context.Background()
+
 	go func() {
-		dispatcher.Run(context.Background())
+		dispatcher.Run(ctx)
 	}()
 
 	paymentProcessor := &worker.PaymentProcessor{
@@ -86,12 +93,23 @@ func main() {
 		invoiceEventHandler.Handle,
 	)
 
-	invoiceHandler := &httpapi.InvoiceHandler{
-		Service: invoiceService,
-	}
+	bus.Publish(event.Event{
+		Type: event.PaymentRequested,
+		Payload: event.PaymentRequestPayload{
+			InvoiceID: "inv-123",
+			Amount:    100,
+			Attempt:   1,
+		},
+	})
 
-	router := httpapi.NewRouter(invoiceHandler)
+	time.Sleep(10 * time.Second)
 
-	log.Println("HTTP server running on port :8080")
-	log.Fatal(http.ListenAndServe(":8080", router))
+	// invoiceHandler := &httpapi.InvoiceHandler{
+	// 	Service: invoiceService,
+	// }
+
+	// router := httpapi.NewRouter(invoiceHandler)
+
+	// log.Println("HTTP server running on port :8080")
+	// log.Fatal(http.ListenAndServe(":8080", router))
 }

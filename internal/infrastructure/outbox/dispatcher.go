@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"time"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/application/worker"
@@ -25,16 +26,22 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			log.Println("ticker")
 			d.DispatchOnce()
 		}
 	}
 }
 
 func (d *Dispatcher) DispatchOnce() {
+	log.Println("Dispatch one")
 	events, err := d.Repo.FindUnpublished(d.BatchSize)
 	if err != nil {
+		log.Println(err.Error())
 		return // logável, mas não fatal
 	}
+
+	log.Println(events)
+	log.Println("events")
 
 	for _, evt := range events {
 		var payload any
