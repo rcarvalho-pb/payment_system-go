@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -49,9 +50,13 @@ func main() {
 	dispatcher := outbox.Dispatcher{
 		Repo:         outboxRepo,
 		EventBus:     bus,
-		PollInterval: 0,
-		BatchSize:    0,
+		PollInterval: 1 * time.Second,
+		BatchSize:    1024,
 	}
+
+	go func() {
+		dispatcher.Run(context.Background())
+	}()
 
 	paymentProcessor := &worker.PaymentProcessor{
 		Repo:     paymentRepo,

@@ -3,8 +3,10 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/rcarvalho-pb/payment_system-go/internal/domain/event"
+	"github.com/rcarvalho-pb/payment_system-go/internal/infrastructure/outbox"
 )
 
 type OutboxRepository struct {
@@ -15,7 +17,11 @@ func NewOutboxRepository(db *sql.DB) *OutboxRepository {
 	return &OutboxRepository{db: db}
 }
 
-func (r *OutboxRepository) Save(evt event.Event) error {
+// Save(OutboxEvent) error
+// FindUnpublished(int) ([]OutboxEvent, error)
+// MarkPublished(string) error
+
+func (r *OutboxRepository) Save(evt outbox.OutboxEvent) error {
 	data, err := json.Marshal(evt.Payload)
 	if err != nil {
 		return err
@@ -30,7 +36,7 @@ func (r *OutboxRepository) Save(evt event.Event) error {
 	return err
 }
 
-func (r *OutboxRepository) FindUnpublished(limit int) ([]event.Event, []int64, error) {
+func (r *OutboxRepository) FindUnpublished(limit int) ([]outbox.OutboxEvent, error) {
 	rows, err := r.db.Query(
 		`SELECT id, event_type, payload
 		 FROM outbox_events
@@ -40,50 +46,51 @@ func (r *OutboxRepository) FindUnpublished(limit int) ([]event.Event, []int64, e
 		limit,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 
-	var events []event.Event
-	var ids []int64
+	var events []outbox.OutboxEvent
+	var ids []string
 
 	for rows.Next() {
 		var (
-			id      int64
+			id      string
 			typ     string
 			payload []byte
 		)
 
 		if err := rows.Scan(&id, &typ, &payload); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
-		evt := event.Event{
-			Type:    event.Type(typ),
-			Payload: payload, // deserializado no dispatcher
+		evt := outbox.OutboxEvent{
+			ID:        id,
+			Type:      event.Type(typ),
+			Payload:   payload,
+			Published: false,
+			CreatedAt: time.Now(),
 		}
 
 		events = append(events, evt)
 		ids = append(ids, id)
 	}
 
-	return events, ids, nil
+	return events, nil
 }
 
-func (r *OutboxRepository) MarkPublished(ids []int64) error {
+func (r *OutboxRepository) MarkPublished(id string) error {
 	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	for _, id := range ids {
-		if _, err := tx.Exec(
-			`UPDATE outbox_events SET published = 1 WHERE id = ?`,
-			id,
-		); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(
+		`UPDATE outbox_events SET published = 1 WHERE id = ?`,
+		id,
+	); err != nil {
+		return err
 	}
 
 	return tx.Commit()
